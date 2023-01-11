@@ -8,48 +8,53 @@ Repo for repro a difference in Portal functionality vs functionality in PowerShe
  PowerShell pre-reqs
 
 ```PowerShell
+# Use the latest
+Install-Module -Name Az -Scope CurrentUser -Repository PSGallery -Force
+Install-Module Microsoft.Graph -Scope CurrentUser
 
-$modules = @(
-    [pscustomobject]@{Name='Az.Accounts';Version='2.9.1';Repository='PSGallery'}
-    [pscustomobject]@{Name='Az.ApiManagement';Version='3.0.0';Repository='PSGallery'}
-    [pscustomobject]@{Name='Az.KeyVault';Version='4.5.0';Repository='PSGallery'}
-    [pscustomobject]@{Name='Az.Resources';Version='';Repository='PSGallery'}
-)
 
-# Install missing modules and fail prereqs check if wrong version is installed.
-$preReqsOk = $true
-$modules | foreach-object {
-    $moduleList = Get-Module -Name $_.Name -ListAvailable
-    if($moduleList.Length -eq 0) {
-        "The module $($_.Name) was not found."
-        if([string]::IsNullOrEmpty($_.Version)) {
-            "Installing latest version of $($_.Name)"
-            Install-Module -Name $_.Name -Scope CurrentUser -Repository $_.Repository -Force
-        }
-        else {
-            "Installing version $($_.Version) of $($_.Name)"
-            Install-Module -Name $_.Name -Scope CurrentUser -Repository $_.Repository -RequiredVersion $_.Version -Force
-        }
-    }
-    else {
-        if ($moduleList.Length -eq 1) {
-            if ($moduleList[0].Version -eq $_.Version -or [string]::IsNullOrEmpty($_.Version) ) {
-                "The module $($_.Name) is already installed."
-            }
-            else {
-                "Version $($moduleList[0].Version) of module $($_.Name) is installed but version $($_.Version) is required."
-                $preReqsOk = $false
-            }
-        }
-        else {
-            throw "Not implemented"
-        }
-    }
-}
-
-if(!$preReqsOk) {
-    throw "Failed pre-requisites check."
-}
+# Below is when I tried to specify exact versions
+#$modules = @(
+#    [pscustomobject]@{Name='Az.Accounts';Version='2.9.1';Repository='PSGallery'}
+#    [pscustomobject]@{Name='Az.ApiManagement';Version='3.0.0';Repository='PSGallery'}
+#    [pscustomobject]@{Name='Az.KeyVault';Version='4.5.0';Repository='PSGallery'}
+#    [pscustomobject]@{Name='Az.Resources';Version='';Repository='PSGallery'}
+#)
+#
+## Install missing modules and fail prereqs check if wrong version is installed.
+#$preReqsOk = $true
+#$modules | foreach-object {
+#    $moduleList = Get-Module -Name $_.Name -ListAvailable
+#    if($moduleList.Length -eq 0) {
+#        "The module $($_.Name) was not found."
+#        if([string]::IsNullOrEmpty($_.Version)) {
+#            "Installing latest version of $($_.Name)"
+#            Install-Module -Name $_.Name -Scope CurrentUser -Repository $_.Repository -Force
+#        }
+#        else {
+#            "Installing version $($_.Version) of $($_.Name)"
+#            Install-Module -Name $_.Name -Scope CurrentUser -Repository $_.Repository -RequiredVersion $_.Version -Force
+#        }
+#    }
+#    else {
+#        if ($moduleList.Length -eq 1) {
+#            if ($moduleList[0].Version -eq $_.Version -or [string]::IsNullOrEmpty($_.Version) ) {
+#                "The module $($_.Name) is already installed."
+#            }
+#            else {
+#                "Version $($moduleList[0].Version) of module $($_.Name) is installed but version $($_.Version) is required."
+#                $preReqsOk = $false
+#            }
+#        }
+#        else {
+#            throw "Not implemented"
+#        }
+#    }
+#}
+#
+#if(!$preReqsOk) {
+#    throw "Failed pre-requisites check."
+#}
 
 ```
 
@@ -136,30 +141,107 @@ popd
 
 ```
 
-### Create the lmited Azure RBAC Role
+### Create the limited Azure RBAC Role
 
 ```PowerShell
-$roleName="APIM Role Scoped down to one API"
+$customRoleName="APIM Role Scoped down to one API"
 $subscriptionId=(Get-AzSubscription).Id
 $apiMgmtResourceGroup=$resourceGroupName
 $apiMgmtName=$apimInstanceName
 
 $apimContext = New-AzApiManagementContext -ResourceGroupName $apiMgmtResourceGroup -ServiceName $apiMgmtName
-Get-AzApiManagementApi -Context $apimContext -Name "EchoApi"
-
+$api = Get-AzApiManagementApi -Context $apimContext -Name "Echo Api" # Error when working with the specified module versions. Reverting to latest
 
 # create a custom role for the new Api
-$role2 = Get-AzRoleDefinition -Name "API Management Service Reader Role"
+$readerRoleName = "API Management Service Reader Role"
+$role2 = Get-AzRoleDefinition -Name $readerRoleName
 $role2.Id = $null
 $role2.NotActions.Clear()
 $role2.AssignableScopes.Clear()
 $role2.AssignableScopes.Add("/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/apis/$($api.ApiId)")
 $role2.AssignableScopes.Add("/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/loggers/$($api.ApiId)")
-$role2.Name = $roleName
+$role2.Name = $customRoleName
 $role2.Actions.Add('Microsoft.ApiManagement/service/apis/*')
 $role2.Actions.Add('Microsoft.ApiManagement/service/loggers/read')
 Write-Host "Role Actions: $($role2.Actions) " -ForegroundColor Blue
 
 New-AzRoleDefinition -Role $role2
+
+```
+
+### Create two users
+
+User | Description
+-----|------------
+apim-read-user | User with the built-in role `API Management Service Reader Role`
+apim-limited-user | User with the custom role `APIM Role Scoped down to one API`
+
+
+```PowerShell
+Connect-MgGraph -Scopes "User.ReadWrite.All"
+
+$readUser='apim-read-user'
+$limitedUser='apim-limited-user'
+$passwordProfile = @{Password = '<password>'} # Todo
+$tenantDomain='<tenant-domain>' # Todo
+
+New-MgUser `
+    -AccountEnabled `
+    -DisplayName $readUser `
+    -PasswordProfile $passwordProfile `
+    -UserPrincipalName "$readUser@$tenantDomain" `
+    -MailNickName $readUser
+
+#New-MgUser_CreateExpanded1: Code: generalException
+#Message: Unexpected exception occurred while authenticating the request.
+
+```
+
+### Assign the roles to the users
+
+```PowerShell
+
+New-AzRoleAssignment `
+    -SignInName "$readUser@$tenantDomain" `
+    -RoleDefinitionName $readerRoleName `
+    -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)"
+
+
+New-AzRoleAssignment `
+    -SignInName "$limitedUser@$tenantDomain" `
+    -RoleDefinitionName $readerRoleName `
+    -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)"
+
+New-AzRoleAssignment `
+    -SignInName "$limitedUser@$tenantDomain" `
+    -RoleDefinitionName $customRoleName `
+    -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/apis/$($api.ApiId)"
+Start-Sleep -Seconds 3
+New-AzRoleAssignment `
+    -SignInName "$limitedUser@$tenantDomain" `
+    -RoleDefinitionName $customRoleName `
+    -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/loggers/$($api.ApiId)"
+
+
+#Get-AzRoleAssignment `
+#    -SignInName "$readUser@$tenantDomain" `
+#    -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/apis/$($api.ApiId)"
+#
+#Remove-AzRoleAssignment `
+#      -SignInName "$readUser@$tenantDomain" `
+#      -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/apis/$($api.ApiId)" `
+#      -RoleDefinitionName 'API Management Service Reader Role'
+#
+#
+#Get-AzRoleAssignment `
+#    -SignInName "$readUser@$tenantDomain" `
+#    -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/loggers/$($api.ApiId)"
+#
+#Remove-AzRoleAssignment `
+#      -SignInName "$readUser@$tenantDomain" `
+#      -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/loggers/$($api.ApiId)" `
+#      -RoleDefinitionName 'API Management Service Reader Role'
+
+
 
 ```
