@@ -1,5 +1,9 @@
 # apim-gap-repro
-Repo for repro a difference in Portal functionality vs functionality in PowerShell modules
+Repo for repro a difference in Portal functionality vs functionality in the PowerShell CmdLet `Set-AzApiManagementApi`.
+
+## Problem statement
+The PowerShell CmdLet fails and returns the error code AuthorizationFailed as per the image below when updating the description of an API, when executed by a user in a custom RBAC role.
+
 
 ## Steps for repro
 
@@ -192,6 +196,10 @@ $role2.AssignableScopes.Add("/subscriptions/$($subscriptionId)/resourceGroups/$(
 $role2.Name = $customRoleName
 $role2.Actions.Add('Microsoft.ApiManagement/service/apis/*')
 $role2.Actions.Add('Microsoft.ApiManagement/service/loggers/read')
+
+# Microsoft.ApiManagement/service/apis/revisions/read
+# Microsoft.ApiManagement/service/apis/revisions/delete
+
 Write-Host "Role Actions: $($role2.Actions) " -ForegroundColor Blue
 
 New-AzRoleDefinition -Role $role2
@@ -310,4 +318,25 @@ Write-Host "new api description: $($api.Description)"
 # # call is needet to change back some api settings which are auto changed by Import-AzApiManagementApi
 # # AND to change description and 'SubscriptionRequired' option
 $result = Set-AzApiManagementApi -InputObject $api -PassThru
+```
+
+```PowerShell
+Connect-AzAccount -UseDeviceAuthentication
+
+$context = New-AzApiManagementContext -ResourceGroupName "$resourceGroupName" -ServiceName "$apimInstanceName"
+
+Set-AzApiManagementApi -Context $context -ApiId 'echo-api' -Description '201'
+
+```
+
+
+```batch
+az login
+resourceGroup=apim-gap-repro-rg
+apimInstanceName=apim-gap-repro-apim
+
+az apim api show -g $resourceGroup --service-name $apimInstanceName --api-id echo-api
+
+az apim api update -g $resourceGroup --service-name $apimInstanceName --api-id echo-api --description "200"
+
 ```
