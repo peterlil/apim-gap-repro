@@ -142,6 +142,8 @@ PATCH https://management.azure.com/subscriptions/<sub-id>/resourceGroups/apim-pr
 The difference that matters is that the CmdLet adds the revision to the URI: `echo-api%3Brev%3D1?api-version=2021-08-01` which the other does not `echo-api?api-version=2021-08-01`. \
 But when adding the revision to the Postman request, it fails with the same error code.
 
+### Preliminary Conclusion
+
 This means that the CmdLet adds unnecessary information to the URI which causes it to break when using this custom role. If the CmdLet is executed with a user that has the role `Contributor` on the apim instance, it works. Does that mean that it is a combition of two problem?:
  - The CmdLet adds unnecessary revision information causing it to behave in a different way than the Azure Portal.
  - There's a problem with the RBAC permission inheritence. If you have write access on a certain level in the hierarchy, you should have write access to everything below that point. That's how it works if you get permissions granted at the resource group level, or the apim instance level. But for some reason that does not apply on the revisions below the apis.
