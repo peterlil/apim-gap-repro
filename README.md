@@ -83,7 +83,7 @@ That code should work, and when doing the exact same thing in the Azure Portal i
 
 <img width="923" alt="image" src="https://user-images.githubusercontent.com/29121387/212129458-8669793a-c4a3-42d2-a29e-a8d714909016.png">
 
-When following the [documentation](https://learn.microsoft.com/en-us/rest/api/apimanagement/current-ga/apis/create-or-update?tabs=HTTP) and posting an update with Postman is also no problem.
+To follow the [documentation](https://learn.microsoft.com/en-us/rest/api/apimanagement/current-ga/apis/create-or-update?tabs=HTTP) and post an update with Postman is also not a problem.
 
 <img width="1091" alt="image" src="https://user-images.githubusercontent.com/29121387/212131144-85e63795-03c4-4d10-b109-371c83403cb0.png">
 
