@@ -1,8 +1,91 @@
 # apim-gap-repro
 Repo for repro a difference in Portal functionality vs functionality in the PowerShell CmdLet `Set-AzApiManagementApi`.
 
-## Problem statement
-The PowerShell CmdLet fails and returns the error code AuthorizationFailed as per the image below when updating the description of an API, when executed by a user in a custom RBAC role.
+## Problem statement and background
+The PowerShell CmdLet `Set-AzApiManagementApi` fails and returns the error code `AuthorizationFailed` as per the image below when updating the description of an API, when executed by a user in a custom RBAC role defined below.
+
+<img width="741" alt="image" src="https://user-images.githubusercontent.com/29121387/212117094-36ae76c0-aa9d-4892-b588-467117b38e34.png">
+
+In this context the organization has one central team managing Azure API Management (apim) as a platform to be used by many workload teams. The workload teams publishes and maintains their own apis in the apim platform, but they should not be able to see nor modify any other workload teams's apis. To accomplish this, the devs of the workload teams are all assigned a role with only the necessary reading permissions on the apim instance, let's call this role `APIM Common Dev`, and it's defined as:
+```json
+{
+  "Name": "APIM Common Dev",
+  "Id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "IsCustom": true,
+  "Description": "Read-only access to service and APIs",
+  "Actions": [
+    "Microsoft.ApiManagement/service/read",
+    "Microsoft.Authorization/*/read",
+    "Microsoft.Insights/alertRules/*",
+    "Microsoft.ResourceHealth/availabilityStatuses/read",
+    "Microsoft.Resources/deployments/*",
+    "Microsoft.Resources/subscriptions/resourceGroups/read",
+    "Microsoft.Support/*",
+    "Microsoft.ApiManagement/service/policySnippets/read",
+    "Microsoft.ApiManagement/service/loggers/read"
+  ],
+  "NotActions": [
+    "Microsoft.ApiManagement/service/users/keys/read"
+  ],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/resourceGroups/apim-prod"
+  ]
+}
+```
+
+In addition to that role, a new role is created everytime a team creates a new api. This role is specific for their team and should only grant required access to maintain that specific api:
+```json
+{
+  "Name": "APIM Role Scoped down to Echo API",
+  "Id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "IsCustom": true,
+  "Description": "Maintainer of Echo API",
+  "Actions": [
+    "Microsoft.ApiManagement/service/*/read",
+    "Microsoft.ApiManagement/service/read",
+    "Microsoft.Authorization/*/read",
+    "Microsoft.Insights/alertRules/*",
+    "Microsoft.ResourceHealth/availabilityStatuses/read",
+    "Microsoft.Resources/deployments/*",
+    "Microsoft.Resources/subscriptions/resourceGroups/read",
+    "Microsoft.Support/*",
+    "Microsoft.ApiManagement/service/apis/*",
+    "Microsoft.ApiManagement/service/loggers/read"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/resourceGroups/apim-prod/providers/Microsoft.ApiManagement/service/apim-prod/apis/echo-api",
+    "/subscriptions/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/resourceGroups/apim-prod/providers/Microsoft.ApiManagement/service/apim-prod/loggers/echo-api"
+  ]
+}
+```
+
+When a dev is assigned to both the roles above and nothing else and executes the script below, it fails with the error.
+```PowerShell
+# Log in to Azure
+Connect-AzAccount -UseDeviceAuthentication
+# Get an apim context
+$context = New-AzApiManagementContext -ResourceGroupName "$resourceGroupName" -ServiceName "$apimInstanceName"
+# Get the Echo API
+$apis = Get-AzApiManagementApi -Context $context
+$api = $apis | Where-Object { $_.ApiId -EQ 'echo-api' }
+# Change a property
+$api.Description = ([int]($api.Description) + 1).ToString()
+# Save the changes
+$result = Set-AzApiManagementApi -InputObject $api -PassThru
+```
+
+That code should work, and when doing the exact same thing in the Azure Portal it works and the changes are persisted.
+
+<img width="923" alt="image" src="https://user-images.githubusercontent.com/29121387/212129458-8669793a-c4a3-42d2-a29e-a8d714909016.png">
+
+When following the [documentation](https://learn.microsoft.com/en-us/rest/api/apimanagement/current-ga/apis/create-or-update?tabs=HTTP) and posting an update with Postman is also no problem.
+
+<img width="1091" alt="image" src="https://user-images.githubusercontent.com/29121387/212131144-85e63795-03c4-4d10-b109-371c83403cb0.png">
 
 
 ## Steps for repro
