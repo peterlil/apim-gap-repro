@@ -12,7 +12,7 @@ In this context the organization has one central team managing Azure API Managem
   "Name": "APIM Common Dev",
   "Id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "IsCustom": true,
-  "Description": "Read-only access to service and APIs",
+  "Description": "Read-only access to service",
   "Actions": [
     "Microsoft.ApiManagement/service/read",
     "Microsoft.Authorization/*/read",
@@ -87,119 +87,83 @@ When following the [documentation](https://learn.microsoft.com/en-us/rest/api/ap
 
 <img width="1091" alt="image" src="https://user-images.githubusercontent.com/29121387/212131144-85e63795-03c4-4d10-b109-371c83403cb0.png">
 
+## Investigation and results
+
+`Set-AzApiManagementApi` clearly does something different than the other methods that are working. By using Fiddler the raw request was captured.
+```http
+PUT https://management.azure.com/subscriptions/<sub-id>/resourceGroups/apim-prod/providers/Microsoft.ApiManagement/service/apim-prod/apis/echo-api%3Brev%3D1?api-version=2021-08-01 HTTP/1.1
+Content-Type: application/json; charset=utf-8
+Content-Length: 459
+
+{
+  "properties": {
+    "description": "8",
+    "subscriptionKeyParameterNames": {
+      "header": "Ocp-Apim-Subscription-Key",
+      "query": "subscription-key"
+    },
+    "type": "http",
+    "apiRevision": "1",
+    "apiVersion": "",
+    "isCurrent": true,
+    "subscriptionRequired": true,
+    "displayName": "Echo API",
+    "serviceUrl": "http://echoapi.cloudapp.net/api",
+    "path": "echo",
+    "protocols": [
+      "Https"
+    ]
+  }
+}
+```
+
+When we compare that with the portal request and how the request is documented, we see one major difference in the URI.
+```http
+PATCH https://management.azure.com/subscriptions/<sub-id>/resourceGroups/apim-prod/providers/Microsoft.ApiManagement/service/apim-prod/apis/echo-api?api-version=2021-08-01
+
+{
+  "id": "/apis/echo-api",
+  "name": "echo-api",
+  "properties": {
+      "displayName": "Echo API",
+      "serviceUrl": "http://echoapi.cloudapp.net/api",
+      "protocols": [
+          "https"
+      ],
+      "description": "7",
+      "path": "echo",
+      "authenticationSettings": null,
+      "subscriptionKeyParameterNames": null,
+      "subscriptionRequired": true
+  }
+}
+```
+
+The difference that matters is that the CmdLet adds the revision to the URI: `echo-api%3Brev%3D1?api-version=2021-08-01` which the other does not .`echo-api?api-version=2021-08-01`.
+When adding the revision to the Postman request, it fails with the same error code.
+
+This means that the CmdLet adds unnecessary information to the URI which causes it to break when using this custom role. If the CmdLet is executed with a user that has the role `Contributor` on the apim instance, it works. Does that mean that it is a combition of two problem?:
+ - The CmdLet adds unnecessary revision information causing it to behave in a different way than the Azure Portal.
+ - There's a problem with the RBAC permission inheritence. If you have write access on a certain level in the hierarchy, you should have write access to everything below that point. That's how it works if you get permissions granted at the resource group level, or the apim instance level. But for some reason that does not apply on the revisions below the apis.
 
 ## Steps for repro
 
 ### Install the pre-requisites
 
- PowerShell pre-reqs
+PowerShell pre-reqs
 
 ```PowerShell
-# Use the latest
+# Use the latest AZ module
 Install-Module -Name Az -Scope CurrentUser -Repository PSGallery -Force
-Install-Module Microsoft.Graph -Scope CurrentUser
-
-
-# Below is when I tried to specify exact versions
-#$modules = @(
-#    [pscustomobject]@{Name='Az.Accounts';Version='2.9.1';Repository='PSGallery'}
-#    [pscustomobject]@{Name='Az.ApiManagement';Version='3.0.0';Repository='PSGallery'}
-#    [pscustomobject]@{Name='Az.KeyVault';Version='4.5.0';Repository='PSGallery'}
-#    [pscustomobject]@{Name='Az.Resources';Version='';Repository='PSGallery'}
-#)
-#
-## Install missing modules and fail prereqs check if wrong version is installed.
-#$preReqsOk = $true
-#$modules | foreach-object {
-#    $moduleList = Get-Module -Name $_.Name -ListAvailable
-#    if($moduleList.Length -eq 0) {
-#        "The module $($_.Name) was not found."
-#        if([string]::IsNullOrEmpty($_.Version)) {
-#            "Installing latest version of $($_.Name)"
-#            Install-Module -Name $_.Name -Scope CurrentUser -Repository $_.Repository -Force
-#        }
-#        else {
-#            "Installing version $($_.Version) of $($_.Name)"
-#            Install-Module -Name $_.Name -Scope CurrentUser -Repository $_.Repository -RequiredVersion $_.Version -Force
-#        }
-#    }
-#    else {
-#        if ($moduleList.Length -eq 1) {
-#            if ($moduleList[0].Version -eq $_.Version -or [string]::IsNullOrEmpty($_.Version) ) {
-#                "The module $($_.Name) is already installed."
-#            }
-#            else {
-#                "Version $($moduleList[0].Version) of module $($_.Name) is installed but version $($_.Version) is required."
-#                $preReqsOk = $false
-#            }
-#        }
-#        else {
-#            throw "Not implemented"
-#        }
-#    }
-#}
-#
-#if(!$preReqsOk) {
-#    throw "Failed pre-requisites check."
-#}
-
+# Install bicep to deploy an APIM instance
+winget install -e --id Microsoft.Bicep
 ```
-
-Bicep pre-reqs
-
-```bash
-# Fetch the latest Bicep CLI binary
-curl -Lo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
-# Mark it as executable
-chmod +x ./bicep
-# Add bicep to your PATH (requires admin)
-sudo mv ./bicep /usr/local/bin/bicep
-# Verify you can now access the 'bicep' command
-bicep --help
-# Done!
-```
-
-### (If needed) Uninstall all Az Modules 
-
-If wrong versions are installed, uninstall all Az modules using the script block below and redo the pre-reqs installation as per above. 
-
-Fetched from [this article](https://learn.microsoft.com/en-us/powershell/azure/uninstall-az-ps?view=azps-9.3.0)
-
-```PowerShell
-Get-InstalledModule -Name Az -AllVersions -OutVariable AzVersions
-
-($AzVersions |
-  ForEach-Object {
-    Import-Clixml -Path (Join-Path -Path $_.InstalledLocation -ChildPath PSGetModuleInfo.xml)
-  }).Dependencies.Name | Sort-Object -Descending -Unique -OutVariable AzModules
-
-$AzModules |
-  ForEach-Object {
-    Remove-Module -Name $_ -ErrorAction SilentlyContinue
-    Write-Output "Attempting to uninstall module: $_"
-    Uninstall-Module -Name $_ -AllVersions
-  }
-
-Remove-Module -Name Az -ErrorAction SilentlyContinue
-Uninstall-Module -Name Az -AllVersions
-```
-
 
 ### Provision an APIM instance
 
 Provision an APIM instance. I used this [this bicep template](https://github.com/peterlil/script-and-templates/tree/main/azure-services/api-management) to do so:
 
 ```PowerShell
-# Make sure the modules are loaded
-#$modules | foreach-object {
-#    if([string]::IsNullOrEmpty($_.Version)) {
-#        Import-Module -Name $_.Name -Force
-#    }
-#    else {
-#        Import-Module -Name $_.Name -RequiredVersion $_.Version -Force
-#    }
-#}
-
 # Log in to Azure
 Connect-AzAccount -UseDeviceAuthentication
 
@@ -237,7 +201,7 @@ $subscriptionId=(Get-AzSubscription).Id
 
 $role.Id = $null
 $role.Name = $apimDevRoleName
-$role.Description = "Read-only access to service and APIs"
+$role.Description = "Read-only access to service"
 $role.Actions.RemoveRange(0,$role.Actions.Count)
 $role.NotActions.RemoveRange(0,$role.NotActions.Count)
 $role.DataActions.RemoveRange(0,$role.DataActions.Count)
@@ -289,44 +253,17 @@ New-AzRoleDefinition -Role $role2
 
 ```
 
-### Create two users
+### Create user
 
 User | Description
 -----|------------
-apim-read-user | User with the built-in role `API Management Service Reader Role`
 apim-limited-user | User with the custom role `APIM Role Scoped down to one API`
 
+I created the user in the Azure Portal. #NoScript
+
+### Assign the roles to the user
 
 ```PowerShell
-Connect-MgGraph -Scopes "User.ReadWrite.All"
-
-$readUser='apim-read-user'
-$limitedUser='apim-limited-user'
-$passwordProfile = @{Password = '<password>'} # Todo
-$tenantDomain='<tenant-domain>' # Todo
-
-New-MgUser `
-    -AccountEnabled `
-    -DisplayName $readUser `
-    -PasswordProfile $passwordProfile `
-    -UserPrincipalName "$readUser@$tenantDomain" `
-    -MailNickName $readUser
-
-#New-MgUser_CreateExpanded1: Code: generalException
-#Message: Unexpected exception occurred while authenticating the request.
-
-```
-
-### Assign the roles to the users
-
-```PowerShell
-
-New-AzRoleAssignment `
-    -SignInName "$readUser@$tenantDomain" `
-    -RoleDefinitionName $readerRoleName `
-    -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)"
-
-
 New-AzRoleAssignment `
     -SignInName "$limitedUser@$tenantDomain" `
     -RoleDefinitionName $readerRoleName `
@@ -341,53 +278,14 @@ New-AzRoleAssignment `
     -SignInName "$limitedUser@$tenantDomain" `
     -RoleDefinitionName $customRoleName `
     -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/loggers/$($api.ApiId)"
-
-
-#Get-AzRoleAssignment `
-#    -SignInName "$readUser@$tenantDomain" `
-#    -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/apis/$($api.ApiId)"
-#
-#Remove-AzRoleAssignment `
-#      -SignInName "$readUser@$tenantDomain" `
-#      -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/apis/$($api.ApiId)" `
-#      -RoleDefinitionName 'API Management Service Reader Role'
-#
-#
-#Get-AzRoleAssignment `
-#    -SignInName "$readUser@$tenantDomain" `
-#    -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/loggers/$($api.ApiId)"
-#
-#Remove-AzRoleAssignment `
-#      -SignInName "$readUser@$tenantDomain" `
-#      -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/loggers/$($api.ApiId)" `
-#      -RoleDefinitionName 'API Management Service Reader Role'
 ```
 
 ### Verify discrepencies
-
-Create an AAD App first to get a client id
-
+This script should fail.
 ```PowerShell
-#Import-Module -Name Az.Accounts -MinimumVersion 2.8.0 -Force
-#Import-Module -Name Az.ApiManagement -MinimumVersion 3.0.0 -Force
-#Import-Module -Name Az.KeyVault -MinimumVersion 4.5.0 -Force
-
 Connect-AzAccount -UseDeviceAuthentication
 
 $context = New-AzApiManagementContext -ResourceGroupName "$resourceGroupName" -ServiceName "$apimInstanceName"
-
-# $importApiParameter = @{
-#     Context             = $context
-#     ApiId               = "de-lsmtest-soap-api-v1" #"de-lsm-soap-api-v1"
-#     SpecificationFormat = "Wsdl"
-#     SpecificationPath   = $WsdlSpecificationPath
-#     Path                = $ApiPath
-#     ApiType             = 'Soap'
-#     WsdlServiceName     = $WsdlServiceName
-#     WsdlEndpointName    = $WsdlEndpointName
-# }
-
-# $api = Import-AzApiManagementApi @importApiParameter
 
 $apis = Get-AzApiManagementApi -Context $context
 
@@ -398,22 +296,20 @@ Write-Host "original api description: $($api.Description)"
 $api.Description = ([int]($api.Description) + 1).ToString()
 Write-Host "new api description: $($api.Description)"
 
-# # call is needet to change back some api settings which are auto changed by Import-AzApiManagementApi
-# # AND to change description and 'SubscriptionRequired' option
 $result = Set-AzApiManagementApi -InputObject $api -PassThru
 ```
 
+Then trying to change the api through CmdLet parameters instead of sending the full object. This works, which means that there should not really be a permission error in the above command.
 ```PowerShell
 Connect-AzAccount -UseDeviceAuthentication
 
 $context = New-AzApiManagementContext -ResourceGroupName "$resourceGroupName" -ServiceName "$apimInstanceName"
 
 Set-AzApiManagementApi -Context $context -ApiId 'echo-api' -Description '201'
-
 ```
 
-
-```batch
+Make the update with Azure CLI, also works.
+```bash
 az login
 resourceGroup=apim-gap-repro-rg
 apimInstanceName=apim-gap-repro-apim
@@ -423,3 +319,6 @@ az apim api show -g $resourceGroup --service-name $apimInstanceName --api-id ech
 az apim api update -g $resourceGroup --service-name $apimInstanceName --api-id echo-api --description "200"
 
 ```
+
+
+
