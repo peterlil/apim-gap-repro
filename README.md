@@ -2,7 +2,7 @@
 Repo for repro a difference in Portal functionality vs functionality in the PowerShell CmdLet `Set-AzApiManagementApi`.
 
 ## Problem statement and background
-The PowerShell CmdLet `Set-AzApiManagementApi` fails and returns the error code `AuthorizationFailed` as per the image below when updating the description of an API, when executed by a user in a custom RBAC role defined below.
+The PowerShell CmdLet `Set-AzApiManagementApi` fails and returns the error code `AuthorizationFailed` as per the image below when updating an API, when executed by a user in a custom RBAC role defined below.
 
 <img width="741" alt="image" src="https://user-images.githubusercontent.com/29121387/212117094-36ae76c0-aa9d-4892-b588-467117b38e34.png">
 
