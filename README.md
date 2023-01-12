@@ -141,6 +141,35 @@ popd
 
 ```
 
+### Create the read-only apim dev role
+
+```PowerShell
+$apimDevRoleName = "APIM ReadOnly dev"
+$role = Get-AzRoleDefinition -Name "API Management Service Reader Role"
+$subscriptionId=(Get-AzSubscription).Id
+
+$role.Id = $null
+$role.Name = $apimDevRoleName
+$role.Description = "Read-only access to service and APIs"
+$role.Actions.RemoveRange(0,$role.Actions.Count)
+$role.NotActions.RemoveRange(0,$role.NotActions.Count)
+$role.DataActions.RemoveRange(0,$role.DataActions.Count)
+$role.NotDataActions.RemoveRange(0,$role.NotDataActions.Count)
+$role.Actions.Add("Microsoft.ApiManagement/service/read")
+$role.Actions.Add("Microsoft.Authorization/*/read")
+$role.Actions.Add("Microsoft.Insights/alertRules/*")
+$role.Actions.Add("Microsoft.ResourceHealth/availabilityStatuses/read")
+$role.Actions.Add("Microsoft.Resources/deployments/*")
+$role.Actions.Add("Microsoft.Resources/subscriptions/resourceGroups/read")
+$role.Actions.Add("Microsoft.Support/*")
+$role.Actions.Add("Microsoft.ApiManagement/service/policySnippets/read")
+$role.Actions.Add("Microsoft.ApiManagement/service/loggers/read")
+$role.NotActions.Add("Microsoft.ApiManagement/service/users/keys/read")
+$role.AssignableScopes.Clear()
+$role.AssignableScopes.Add("/subscriptions/$subscriptionId/resourceGroups/$resourceGroupName")
+New-AzRoleDefinition -Role $role
+```
+
 ### Create the limited Azure RBAC Role
 
 ```PowerShell
@@ -241,7 +270,44 @@ New-AzRoleAssignment `
 #      -SignInName "$readUser@$tenantDomain" `
 #      -Scope "/subscriptions/$($subscriptionId)/resourceGroups/$($apiMgmtResourceGroup)/providers/Microsoft.ApiManagement/service/$($apiMgmtName)/loggers/$($api.ApiId)" `
 #      -RoleDefinitionName 'API Management Service Reader Role'
+```
 
+### Verify discrepencies
 
+Create an AAD App first to get a client id
 
+```PowerShell
+#Import-Module -Name Az.Accounts -MinimumVersion 2.8.0 -Force
+#Import-Module -Name Az.ApiManagement -MinimumVersion 3.0.0 -Force
+#Import-Module -Name Az.KeyVault -MinimumVersion 4.5.0 -Force
+
+Connect-AzAccount -UseDeviceAuthentication
+
+$context = New-AzApiManagementContext -ResourceGroupName "$resourceGroupName" -ServiceName "$apimInstanceName"
+
+# $importApiParameter = @{
+#     Context             = $context
+#     ApiId               = "de-lsmtest-soap-api-v1" #"de-lsm-soap-api-v1"
+#     SpecificationFormat = "Wsdl"
+#     SpecificationPath   = $WsdlSpecificationPath
+#     Path                = $ApiPath
+#     ApiType             = 'Soap'
+#     WsdlServiceName     = $WsdlServiceName
+#     WsdlEndpointName    = $WsdlEndpointName
+# }
+
+# $api = Import-AzApiManagementApi @importApiParameter
+
+$apis = Get-AzApiManagementApi -Context $context
+
+$api = $apis | Where-Object { $_.ApiId -EQ 'echo-api' }
+
+Write-Host "original api description: $($api.Description)"
+# edit some api informations
+$api.Description = ([int]($api.Description) + 1).ToString()
+Write-Host "new api description: $($api.Description)"
+
+# # call is needet to change back some api settings which are auto changed by Import-AzApiManagementApi
+# # AND to change description and 'SubscriptionRequired' option
+$result = Set-AzApiManagementApi -InputObject $api -PassThru
 ```
